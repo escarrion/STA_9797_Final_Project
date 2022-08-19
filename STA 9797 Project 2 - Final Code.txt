@@ -1,0 +1,172 @@
+/* Read In and Modify the Data */
+data BirthWeight;
+	set sashelp.BWeight;
+	/* Re-Factor Visit */
+		if Visit = 0 then PreNatal = 0;
+		else if Visit = 1 then PreNatal = 2;
+		else if Visit = 2 then PreNatal = 3;
+		else PreNatal = 1;
+	/* Re-Factor Education */
+		if MomEdLevel = 0 then Education = 1;
+		else if MomEdLevel = 1 then Education = 2;
+		else if MomEdLevel = 2 then Education = 3;
+		else Education = 0;
+	/* Create New Binary Variable for BirthWeight */
+		if Weight > 3370.76 then AboveAverage = 1; else AboveAverage = 0;
+	/* Adjust Age to fold back in their median */
+		Age = MomAge+27;
+		WeightGain = MomWtGain + 30;
+	/* Drop the Modified Variables */
+		drop Visit MomEdLevel MomAge MomWtGain;
+run;
+/* Use PROC SURVEYSELECT to randomly sample the 50K observations */
+/* First Sort by Education as it is our factor of interest */
+proc sort data = BirthWeight;
+	by Education;
+run;
+proc surveyselect data = BirthWeight method = srs seed = 1003 n=150 out=BirthWeightSRS;
+	strata Education;
+run;
+
+/************************************************/
+/************************************************/
+
+/* EDA */
+/* Summary Statistics */
+proc means data = BirthWeight std n min max mean median;
+	class Education MomSmoke;
+	by Education;
+	var Weight;
+	title "Summary Statistics for Birth Weight by Level of Education and Smoking";
+run;
+
+proc means data = BirthWeightSRS std n min max mean median;
+	class Education MomSmoke;
+	by Education
+	var Weight;
+	title "Summary Statistics for Birth Weight by Level of Education and Smoking";
+run;
+
+/* HISTOGRAMS */
+proc univariate data = BirthWeight;
+	class Education MomSmoke;
+	by Education;
+	var Weight;
+	histogram Weight/nrows = 4;
+	ods select histogram;
+	title "Distribution of Birth Weight by Level of Education - All Data";
+run;
+proc univariate data = BirthWeight;
+	class Education MomSmoke;
+	by Education;
+	var Weight;
+	histogram Weight/nrows = 4;
+	ods select histogram;
+	title "Distribution of Birth Weight by Level of Education - Sample";
+run;
+
+/************************************************/
+/************************************************/
+
+/**** 1-WAY ANOVA ****/
+proc anova data = BirthWeightSRS;
+	class Education;
+	model Weight = Education;
+	means Education/tukey hovtest=levene;
+	title "1-Way ANOVA Weight v Education";
+run;
+
+/**** 2-WAY ANOVA ****/
+/* Fully Saturated Model */
+proc anova data = BirthWeightSRS;
+	class Education MomSmoke;
+	model Weight = Education|MomSmoke;
+	means Education MomSmoke;
+	title "2-Way ANOVA Weight v Smoking & Education - Fully Saturated";
+run;
+
+/* Main Effects Model */
+proc anova data = BirthWeightSRS;
+	class Education MomSmoke;
+	model Weight = Education MomSmoke;
+	means Education MomSmoke;
+	title "2-Way ANOVA Weight v Smoking & Education - Main Effects";
+run;
+
+/************************************************/
+/************************************************/
+
+/**** ANCOVA ****/
+/* WEIGHT = WEIGHTGAIN - IS WEIGHTGAIN A COVARIATE? */
+proc reg data=BirthWeightSRS;
+	model Weight = WeightGain;
+run;
+
+
+/* Interaction Plots */
+proc sgplot data=BirthWeightSRS;
+	reg x=WeightGain y=Weight/group=Education;
+run;
+proc sgplot data=BirthWeightSRS;
+	reg x=WeightGain y=Weight/group=MomSmoke;
+run;
+
+
+/* TEST FOR EQUAL SLOPES */
+proc glm data=BirthWeightSRS;
+	class MomSmoke;
+	model Weight = MomSmoke|WeightGain;
+run;
+proc glm data=BirthWeightSRS;
+	class Education;
+	model Weight = Education|WeightGain;
+run;
+
+/* 2-WAY ANCOVA */
+proc glm data=BirthWeightSRS;
+	class Education MomSmoke;
+	model Weight = Education|MomSmoke|WeightGain;
+	title "2-WAY ANCOVA - Fully Saturated";
+run;
+proc glm data=BirthWeightSRS;
+	class Education MomSmoke;
+	model Weight = Education MomSmoke WeightGain;
+	title "2-WAY ANCOVA - Main Effects";
+run;
+ods rtf close;
+
+/************************************************/
+/************************************************/
+
+/**** FISHER'S EXACT, COCHRAN-ARMITAGE, CHI-SQUARE ****/
+
+proc freq data = BirthWeightSRS;
+	exact fisher;
+	tables Education*MomSmoke/chisq trend;
+	title "Proc Freq - Education x Smoking";
+run;
+
+/************************************************/
+/************************************************/
+
+/**** LOGISTIC REGRESSION ****/
+proc logistic data = BirthWeightSRS;
+	class Education(ref="0") MomSmoke(ref="0")/param=ref;
+	model AboveAverage(event="1") = Education|MomSmoke|WeightGain / ctable lackfit;
+	title "Logistic Regression - Fully Saturated";
+run;
+proc logistic data = BirthWeightSRS;
+	class Education(ref="0") MomSmoke(ref="0")/param=ref;
+	model AboveAverage(event="1") = Education MomSmoke WeightGain / ctable lackfit;
+	title "Logistic Regression - Main Effects";
+run;
+
+proc logistic data = BirthWeightSRS;
+	class MomSmoke(ref="0")/param=ref;
+	model AboveAverage(event="1") = MomSmoke|WeightGain / ctable lackfit;
+	title "Logistic Regression - No Education - Saturated";
+run;
+proc logistic data = BirthWeightSRS;
+	class MomSmoke(ref="0")/param=ref;
+	model AboveAverage(event="1")= MomSmoke WeightGain / ctable lackfit;
+	title "Logistic Regression - No Education - Main Effects";
